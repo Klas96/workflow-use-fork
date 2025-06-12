@@ -63,12 +63,6 @@ RUN apk add --no-cache \
     xdg-utils \
     zlib
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    echo 'export PATH="/root/.cargo/bin:$PATH"' >> /root/.bashrc && \
-    echo 'export PATH="/root/.cargo/bin:$PATH"' >> /root/.profile && \
-    export PATH="/root/.cargo/bin:$PATH"
-
 # Copy extension files
 COPY extension/ ./extension/
 WORKDIR /app/extension
@@ -81,26 +75,24 @@ WORKDIR /app/workflows
 
 # Create virtual environment with specific Python version
 RUN python3 -m venv .venv && \
-    . .venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install --upgrade setuptools wheel
+    /app/workflows/.venv/bin/pip install --upgrade pip setuptools wheel
 
 # Install packages with specific versions
-RUN . .venv/bin/activate && pip install -v typer
-RUN . .venv/bin/activate && pip install -v browser-use
-RUN . .venv/bin/activate && pip install -v --no-binary :all: playwright-python==1.40.0
-RUN . .venv/bin/activate && pip install -v patchright==1.52.4
-RUN . .venv/bin/activate && pip install -v -e . --no-deps
+RUN /app/workflows/.venv/bin/pip install -v \
+    typer \
+    browser-use \
+    playwright-python==1.40.0 \
+    patchright==1.52.4 \
+    -e . --no-deps
 RUN cd /app && npx playwright install chromium
 
 # Set up UI
 WORKDIR /app
-COPY ui/ ./ui/
+COPY ui/package.json ui/package-lock.json* ./ui/
 WORKDIR /app/ui
-RUN rm -rf node_modules package-lock.json && \
-    npm install && \
-    npm install @rollup/rollup-linux-x64-musl && \
-    SKIP_TYPESCRIPT_CHECK=true npm run build
+RUN npm install && npm install @rollup/rollup-linux-x64-musl
+COPY ui/ ./
+RUN npm run build
 
 # Create browser profile directories with correct permissions
 RUN mkdir -p /root/.config/chromium \
