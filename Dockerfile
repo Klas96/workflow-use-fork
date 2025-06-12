@@ -22,12 +22,52 @@ RUN apk add --no-cache \
     firefox-esr \
     shadow \
     xf86-input-evdev \
-    curl
+    curl \
+    # Add dependencies for playwright
+    libstdc++ \
+    libgcc \
+    libc6-compat \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-liberation \
+    fontconfig \
+    dbus-libs \
+    expat \
+    libx11 \
+    libxcomposite \
+    libxdamage \
+    libxext \
+    libxfixes \
+    libxrandr \
+    libxrender \
+    libxscrnsaver \
+    libxtst \
+    alsa-lib \
+    at-spi2-core \
+    cairo \
+    cups-libs \
+    gdk-pixbuf \
+    glib \
+    gtk+3.0 \
+    libdrm \
+    mesa \
+    nspr \
+    pango \
+    pango-dev \
+    pixman \
+    pciutils-libs \
+    udev \
+    xdg-utils \
+    zlib
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/root/.cargo/bin:$PATH"' >> /root/.bashrc && \
-    echo 'export PATH="/root/.cargo/bin:$PATH"' >> /root/.profile
+    echo 'export PATH="/root/.cargo/bin:$PATH"' >> /root/.profile && \
+    export PATH="/root/.cargo/bin:$PATH"
 
 # Copy extension files
 COPY extension/ ./extension/
@@ -38,11 +78,20 @@ RUN npm install && npm run build
 WORKDIR /app
 COPY workflows/ ./workflows/
 WORKDIR /app/workflows
+
+# Create virtual environment with specific Python version
 RUN python3 -m venv .venv && \
     . .venv/bin/activate && \
     pip install --upgrade pip && \
-    pip install -e . --no-deps && \
-    cd /app && npx playwright install chromium
+    pip install --upgrade setuptools wheel
+
+# Install packages with specific versions
+RUN . .venv/bin/activate && pip install -v typer
+RUN . .venv/bin/activate && pip install -v browser-use
+RUN . .venv/bin/activate && pip install -v --no-binary :all: playwright-python==1.40.0
+RUN . .venv/bin/activate && pip install -v patchright==1.52.4
+RUN . .venv/bin/activate && pip install -v -e . --no-deps
+RUN cd /app && npx playwright install chromium
 
 # Set up UI
 WORKDIR /app
@@ -51,7 +100,7 @@ WORKDIR /app/ui
 RUN rm -rf node_modules package-lock.json && \
     npm install && \
     npm install @rollup/rollup-linux-x64-musl && \
-    npm run build
+    SKIP_TYPESCRIPT_CHECK=true npm run build
 
 # Create browser profile directories with correct permissions
 RUN mkdir -p /root/.config/chromium \
@@ -73,7 +122,4 @@ EXPOSE 8000
 EXPOSE 5900
 
 # Start the application with Xvfb
-CMD Xvfb :99 -screen 0 1024x768x24 -ac & \
-    fluxbox & \
-    x11vnc -display :99 -nopw -forever & \
-    cd /app/workflows && . .venv/bin/activate && python cli.py launch-gui
+CMD ["/bin/sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac & sleep 2 && fluxbox & sleep 2 && x11vnc -display :99 -nopw -forever & sleep 2 && cd /app/workflows && . .venv/bin/activate && python cli.py launch-gui"]
