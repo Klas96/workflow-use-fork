@@ -450,17 +450,17 @@ def launch_gui():
 
 	backend = subprocess.Popen(['uvicorn', 'backend.api:app', '--reload'], stdout=backend_log, stderr=subprocess.STDOUT)
 	typer.echo(typer.style('Starting frontend...', bold=True))
-	frontend = subprocess.Popen(['npm', 'run', 'dev'], cwd='../ui', stdout=frontend_log, stderr=subprocess.STDOUT)
+	# frontend = subprocess.Popen(['npm', 'run', 'dev'], cwd='../ui', stdout=frontend_log, stderr=subprocess.STDOUT)
 	typer.echo(typer.style('Opening browser...', bold=True))
-	webbrowser.open('http://localhost:5173')
+	webbrowser.open('http://localhost:8000')
 	try:
 		typer.echo(typer.style('Press Ctrl+C to stop the GUI and servers.', fg=typer.colors.YELLOW, bold=True))
 		backend.wait()
-		frontend.wait()
+		# frontend.wait()
 	except KeyboardInterrupt:
 		typer.echo(typer.style('\nShutting down servers...', fg=typer.colors.RED, bold=True))
 		backend.terminate()
-		frontend.terminate()
+		# frontend.terminate()
 
 
 if __name__ == '__main__':

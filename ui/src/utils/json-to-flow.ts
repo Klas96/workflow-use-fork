@@ -1,23 +1,20 @@
 import { Edge } from '@xyflow/react';
-import { Workflow, WorkflowStep, WorkflowMetadata, AppNode } from '../types/workflow-layout.types';
+import { Workflow, WorkflowStep, WorkflowMetadata, PositionLoggerNode } from '../types/workflow-layout.types';
 
 export function jsonToFlow(workflow: string): { 
-  nodes: AppNode[]; 
+  nodes: PositionLoggerNode[]; 
   edges: Edge[];
   metadata: WorkflowMetadata;
 } {
   const parsedWorkflow = JSON.parse(workflow) as Workflow;
-  const nodes: AppNode[] = parsedWorkflow.steps.map((step: WorkflowStep, idx: number) => ({
+  const nodes: PositionLoggerNode[] = parsedWorkflow.steps.map((step: WorkflowStep, idx: number) => ({
     id: String(idx),
-    data: { 
-      label: `${step.description}`, 
-      stepData: step,
-      workflowName: parsedWorkflow.name
-    },
-    position: { x: 0, y: idx * 100 }
+    data: { label: `${step.description}` },
+    position: { x: 0, y: idx * 100 },
+    type: 'position-logger'
   }));
 
-  const edges: Edge[] = parsedWorkflow.steps.slice(1).map((_, idx) => ({
+  const edges: Edge[] = parsedWorkflow.steps.slice(1).map((_: WorkflowStep, idx: number) => ({
     id: `e${idx}-${idx + 1}`,
     source: String(idx),
     target: String(idx + 1),
