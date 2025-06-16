@@ -2,6 +2,7 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException
+import logging
 
 from .service import WorkflowService
 from .views import (
@@ -23,10 +24,12 @@ def get_service() -> WorkflowService:
 	return WorkflowService()
 
 
-@router.get('', response_model=WorkflowListResponse)
+@router.get('/', response_model=WorkflowListResponse)
 async def list_workflows():
+	print("Listing workflows...")
 	service = get_service()
 	workflows = service.list_workflows()
+	print(f"Found workflows: {workflows}")
 	return WorkflowListResponse(workflows=workflows)
 
 

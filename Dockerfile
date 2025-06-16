@@ -43,7 +43,8 @@ RUN . .venv/bin/activate && pip install -v patchright==1.52.4
 RUN . .venv/bin/activate && pip install -v -e . --no-deps
 RUN . .venv/bin/activate && python -m playwright install chromium
 RUN . .venv/bin/activate && pip install fastmcp
-RUN . .venv/bin/activate && pip install fastapi
+RUN . .venv/bin/activate && pip install fastapi uvicorn
+RUN . .venv/bin/activate && pip install python-multipart
 
 # Copy built frontend from Stage 1
 WORKDIR /app
@@ -55,9 +56,25 @@ ENV PORT=8000
 ENV DISPLAY=:99
 ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
+# Create a startup script
+RUN echo '#!/bin/bash\n\
+Xvfb :99 -screen 0 1024x768x24 -ac & \
+sleep 2 && \
+fluxbox & \
+sleep 2 && \
+x11vnc -display :99 -nopw -forever & \
+sleep 2 && \
+cd /app && \
+python3 -m http.server 8000 --directory ui/dist & \
+cd /app/workflows && \
+source .venv/bin/activate && \
+PYTHONPATH=/app/workflows uvicorn backend.api:app --host 0.0.0.0 --port 8001' > /app/start.sh && \
+chmod +x /app/start.sh
+
 # Expose ports
 EXPOSE 8000
+EXPOSE 8001
 EXPOSE 5900
 
 # Start the application with Xvfb and minimal GUI
-CMD ["/bin/sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac & sleep 2 && fluxbox & sleep 2 && x11vnc -display :99 -nopw -forever & sleep 2 && cd /app/workflows && . .venv/bin/activate && python cli.py launch-gui"]
+CMD ["/app/start.sh"]

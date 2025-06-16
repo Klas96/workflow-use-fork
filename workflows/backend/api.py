@@ -17,12 +17,12 @@ app.add_middleware(
 	allow_headers=['*'],
 )
 
-# Serve static files (frontend)
+# Include routers first
+app.include_router(router)
+
+# Serve static files (frontend) last
 frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ui/dist'))
 app.mount("/", StaticFiles(directory=frontend_path, html=True), name="static")
-
-# Include routers
-app.include_router(router)
 
 # Optional standalone runner
 if __name__ == '__main__':
