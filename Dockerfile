@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     firefox-esr \
     build-essential \
     python3-dev \
+    htop \
+    procps \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy extension and workflows
@@ -55,6 +57,10 @@ ENV NODE_ENV=production
 ENV PORT=8000
 ENV DISPLAY=:99
 ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH=/usr/bin/firefox-esr
 
 # Create a startup script
 RUN echo '#!/bin/bash\n\
@@ -74,6 +80,14 @@ if [ ! -d "/app/workflows/.venv" ]; then\n\
     pip install python-multipart\n\
 fi\n\
 \n\
+# Create and set permissions for logs directory\n\
+mkdir -p /app/workflows/tmp/logs\n\
+chmod 777 /app/workflows/tmp/logs\n\
+\n\
+# Clean up any existing X server lock files\n\
+rm -f /tmp/.X99-lock\n\
+rm -f /tmp/.X11-unix/X99\n\
+\n\
 # Start Xvfb with a larger screen and wait for it to be ready\n\
 Xvfb :99 -screen 0 1024x768x24 -ac &\n\
 sleep 2\n\
@@ -85,8 +99,8 @@ export DISPLAY=:99\n\
 fluxbox &\n\
 sleep 1\n\
 \n\
-# Start x11vnc\n\
-x11vnc -display :99 -nopw -forever &\n\
+# Start x11vnc with proper options\n\
+x11vnc -display :99 -nopw -forever -shared -noxdamage &\n\
 \n\
 # Start the frontend server\n\
 cd /app\n\
@@ -96,7 +110,15 @@ python3 -m http.server 8000 --directory ui/dist &\n\
 cd /app/workflows\n\
 export PYTHONPATH=/app/workflows\n\
 . .venv/bin/activate\n\
-uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log\n\
+uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log &\n\
+\n\
+# Launch monitoring tools in xterm\n\
+xterm -geometry 100x30+0+0 -e "htop" &\n\
+xterm -geometry 100x30+0+400 -e "tail -f /app/workflows/tmp/logs/backend.log" &\n\
+xterm -geometry 100x30+500+0 -e "while true; do clear; ps aux | grep -E \"uvicorn|python|chromium|firefox\" | grep -v grep; sleep 2; done" &\n\
+\n\
+# Keep the container running\n\
+tail -f /dev/null\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose ports

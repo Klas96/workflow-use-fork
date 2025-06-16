@@ -1,6 +1,8 @@
 import asyncio
 import json
 import time
+import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -21,7 +23,6 @@ from .views import (
 	WorkflowUpdateRequest,
 )
 
-
 class WorkflowService:
 	"""Workflow execution service."""
 
@@ -34,17 +35,55 @@ class WorkflowService:
 		# LLM / workflow executor
 		try:
 			self.llm_instance = ChatOpenAI(model='gpt-4.1-mini')
+			self.logger.info("LLM initialized successfully")
 		except Exception as exc:
-			print(f'Error initializing LLM: {exc}. Ensure OPENAI_API_KEY is set.')
+			self.logger.error(f'Error initializing LLM: {exc}. Ensure OPENAI_API_KEY is set.')
 			self.llm_instance = None
 
 		self.browser_instance = Browser()
 		self.controller_instance = WorkflowController()
+		self.logger.info("Browser and controller instances initialized")
 
 		# In‑memory task tracking
 		self.active_tasks: Dict[str, TaskInfo] = {}
 		self.workflow_tasks: Dict[str, asyncio.Task] = {}
 		self.cancel_events: Dict[str, asyncio.Event] = {}
+
+		self._setup_logging()
+
+	def _setup_logging(self):
+		"""Set up logging configuration."""
+		log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tmp", "logs")
+		os.makedirs(log_dir, exist_ok=True)
+		
+		log_file = os.path.join(log_dir, "backend.log")
+		
+		# Configure logging to write to both file and console
+		logging.basicConfig(
+			level=logging.INFO,
+			format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+			handlers=[
+				logging.FileHandler(log_file),
+				logging.StreamHandler()  # This will write to stdout/stderr
+			]
+		)
+		
+		# Create logger for this module
+		self.logger = logging.getLogger(__name__)
+		self.logger.setLevel(logging.INFO)
+		
+		# Add file handler
+		file_handler = logging.FileHandler(log_file)
+		file_handler.setLevel(logging.INFO)
+		formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+		file_handler.setFormatter(formatter)
+		self.logger.addHandler(file_handler)
+		
+		# Add console handler
+		console_handler = logging.StreamHandler()
+		console_handler.setLevel(logging.INFO)
+		console_handler.setFormatter(formatter)
+		self.logger.addHandler(console_handler)
 
 	async def _log_file_position(self) -> int:
 		log_file = self.log_dir / 'backend.log'
@@ -66,26 +105,25 @@ class WorkflowService:
 		async with aiofiles.open(log_file, 'r') as f:
 			await f.seek(position)
 			all_logs = await f.readlines()
-			new_logs = [
-				line
-				for line in all_logs
-				if not line.strip().startswith('INFO:')
-				and not line.strip().startswith('WARNING:')
-				and not line.strip().startswith('DEBUG:')
-				and not line.strip().startswith('ERROR:')
-			]
+			# Include all log levels
+			new_logs = [line for line in all_logs]
 		return new_logs, current_size
 
 	async def _write_log(self, log_file: Path, message: str) -> None:
 		async with aiofiles.open(log_file, 'a') as f:
 			await f.write(message)
+		self.logger.info(message.strip())  # Also log to console
 
 	def list_workflows(self) -> List[str]:
-		return [f.name for f in self.tmp_dir.iterdir() if f.is_file() and not f.name.startswith('temp_recording')]
+		workflows = [f.name for f in self.tmp_dir.iterdir() if f.is_file() and not f.name.startswith('temp_recording')]
+		self.logger.info(f"Listing workflows: {workflows}")
+		return workflows
 
 	def get_workflow(self, name: str) -> str:
 		wf_file = self.tmp_dir / name
-		return wf_file.read_text()
+		content = wf_file.read_text()
+		self.logger.info(f"Retrieved workflow: {name}")
+		return content
 
 	def update_workflow(self, request: WorkflowUpdateRequest) -> WorkflowResponse:
 		workflow_filename = request.filename
@@ -93,10 +131,12 @@ class WorkflowService:
 		updated_step_data = request.stepData
 
 		if not (workflow_filename and node_id is not None and updated_step_data):
+			self.logger.warning("Missing required fields in workflow update request")
 			return WorkflowResponse(success=False, error='Missing required fields')
 
 		wf_file = self.tmp_dir / workflow_filename
 		if not wf_file.exists():
+			self.logger.warning(f"Workflow file not found: {workflow_filename}")
 			return WorkflowResponse(success=False, error=f"Workflow file '{workflow_filename}' not found")
 
 		workflow_content = json.loads(wf_file.read_text())
@@ -105,8 +145,10 @@ class WorkflowService:
 		if 0 <= int(node_id) < len(steps):
 			steps[int(node_id)] = updated_step_data
 			wf_file.write_text(json.dumps(workflow_content, indent=2))
+			self.logger.info(f"Updated workflow {workflow_filename}, node {node_id}")
 			return WorkflowResponse(success=True)
 
+		self.logger.warning(f"Node {node_id} not found in workflow {workflow_filename}")
 		return WorkflowResponse(success=False, error='Node not found in workflow')
 
 	def update_workflow_metadata(self, request: WorkflowMetadataUpdateRequest) -> WorkflowResponse:
@@ -153,11 +195,12 @@ class WorkflowService:
 
 			workflow_path = self.tmp_dir / workflow_name
 			try:
+				self.logger.info(f"Loading workflow from {workflow_path}")
 				self.workflow_obj = Workflow.load_from_file(
 					str(workflow_path), llm=self.llm_instance, browser=self.browser_instance, controller=self.controller_instance
 				)
 			except Exception as e:
-				print(f'Error loading workflow: {e}')
+				self.logger.error(f'Error loading workflow: {e}')
 				return
 
 			await self._write_log(log_file, f'[{ts}] Executing workflow...\n')
@@ -201,8 +244,10 @@ class WorkflowService:
 	def get_task_status(self, task_id: str) -> Optional[WorkflowStatusResponse]:
 		task_info = self.active_tasks.get(task_id)
 		if not task_info:
+			self.logger.warning(f"Task {task_id} not found")
 			return None
 
+		self.logger.info(f"Task {task_id} status: {task_info.status}")
 		return WorkflowStatusResponse(
 			task_id=task_id,
 			status=task_info.status,
@@ -214,8 +259,10 @@ class WorkflowService:
 	async def cancel_workflow(self, task_id: str) -> WorkflowCancelResponse:
 		task_info = self.active_tasks.get(task_id)
 		if not task_info:
+			self.logger.warning(f"Task {task_id} not found for cancellation")
 			return WorkflowCancelResponse(success=False, message='Task not found')
 		if task_info.status != 'running':
+			self.logger.warning(f"Task {task_id} is already {task_info.status}")
 			return WorkflowCancelResponse(success=False, message=f'Task is already {task_info.status}')
 
 		task = self.workflow_tasks.get(task_id)
@@ -232,4 +279,5 @@ class WorkflowService:
 		)
 
 		self.active_tasks[task_id].status = 'cancelling'
+		self.logger.info(f"Task {task_id} cancellation requested")
 		return WorkflowCancelResponse(success=True, message='Workflow cancellation requested')

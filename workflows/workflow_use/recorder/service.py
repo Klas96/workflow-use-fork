@@ -123,6 +123,8 @@ class RecordingService:
 					f'--load-extension={str(EXT_DIR.resolve())}',
 					'--no-default-browser-check',
 					'--no-first-run',
+					'--display=:99',  # Use the Xvfb display
+					'--window-size=1024,768',  # Match Xvfb screen size
 				],
 				keep_alive=True,
 			)
