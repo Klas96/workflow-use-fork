@@ -58,22 +58,50 @@ ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 # Create a startup script
 RUN echo '#!/bin/bash\n\
-Xvfb :99 -screen 0 1024x768x24 -ac & \
-sleep 2 && \
-fluxbox & \
-sleep 2 && \
-x11vnc -display :99 -nopw -forever & \
-sleep 2 && \
-cd /app && \
-python3 -m http.server 8000 --directory ui/dist & \
-cd /app/workflows && \
-source .venv/bin/activate && \
-PYTHONPATH=/app/workflows uvicorn backend.api:app --host 0.0.0.0 --port 8001' > /app/start.sh && \
-chmod +x /app/start.sh
+if [ ! -d "/app/workflows/.venv" ]; then\n\
+    echo "Creating virtual environment..."\n\
+    python3 -m venv /app/workflows/.venv\n\
+    . /app/workflows/.venv/bin/activate\n\
+    pip install -v typer\n\
+    pip install -v browser-use\n\
+    pip install requests\n\
+    pip install -v playwright\n\
+    pip install -v patchright\n\
+    pip install -v -e . --no-deps\n\
+    python -m playwright install\n\
+    pip install fastmcp\n\
+    pip install fastapi uvicorn\n\
+    pip install python-multipart\n\
+fi\n\
+\n\
+# Start Xvfb with a larger screen and wait for it to be ready\n\
+Xvfb :99 -screen 0 1024x768x24 -ac &\n\
+sleep 2\n\
+\n\
+# Set display environment variable\n\
+export DISPLAY=:99\n\
+\n\
+# Start fluxbox window manager\n\
+fluxbox &\n\
+sleep 1\n\
+\n\
+# Start x11vnc\n\
+x11vnc -display :99 -nopw -forever &\n\
+\n\
+# Start the frontend server\n\
+cd /app\n\
+python3 -m http.server 8000 --directory ui/dist &\n\
+\n\
+# Start the API server\n\
+cd /app/workflows\n\
+export PYTHONPATH=/app/workflows\n\
+. .venv/bin/activate\n\
+uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log\n\
+' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose ports
 EXPOSE 8000
-EXPOSE 8001
+EXPOSE 8002
 EXPOSE 5900
 
 # Start the application with Xvfb and minimal GUI
