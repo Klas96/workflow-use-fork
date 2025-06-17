@@ -1,8 +1,8 @@
 import asyncio
 import uuid
-
-from fastapi import APIRouter, HTTPException
 import logging
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List, Optional
 
 from .service import WorkflowService
 from .views import (
@@ -17,26 +17,37 @@ from .views import (
 	WorkflowUpdateRequest,
 )
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix='/api/workflows')
 
 
 def get_service() -> WorkflowService:
+	logger.info("Initializing WorkflowService")
 	return WorkflowService()
 
 
-@router.get('/', response_model=WorkflowListResponse)
-async def list_workflows():
-	print("Listing workflows...")
-	service = get_service()
-	workflows = service.list_workflows()
-	print(f"Found workflows: {workflows}")
-	return WorkflowListResponse(workflows=workflows)
+@router.get('/', response_model=List[str])
+async def list_workflows(service: WorkflowService = Depends(get_service)):
+	logger.info("GET /api/workflows/ - Listing all workflows")
+	try:
+		workflows = service.list_workflows()
+		logger.info(f"Found workflows: {workflows}")
+		return workflows
+	except Exception as e:
+		logger.error(f"Error listing workflows: {e}")
+		raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get('/{name}', response_model=str)
-async def get_workflow(name: str):
-	service = get_service()
-	return service.get_workflow(name)
+@router.get('/{workflow_name}', response_model=str)
+async def get_workflow(workflow_name: str, service: WorkflowService = Depends(get_service)):
+	logger.info(f"GET /api/workflows/{workflow_name} - Retrieving workflow")
+	try:
+		return service.get_workflow(workflow_name)
+	except Exception as e:
+		logger.error(f"Error getting workflow {workflow_name}: {e}")
+		raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_name}")
 
 
 @router.post('/update', response_model=WorkflowResponse)
@@ -52,41 +63,17 @@ async def update_workflow_metadata(request: WorkflowMetadataUpdateRequest):
 
 
 @router.post('/execute', response_model=WorkflowExecuteResponse)
-async def execute_workflow(request: WorkflowExecuteRequest):
-	service = get_service()
-	workflow_name = request.name
-	inputs = request.inputs
-
-	if not workflow_name:
-		raise HTTPException(status_code=400, detail='Missing workflow name')
-
-	workflow_path = service.tmp_dir / workflow_name
-	if not workflow_path.exists():
-		raise HTTPException(status_code=404, detail=f'Workflow {workflow_name} not found')
-
+async def execute_workflow(
+	workflow_name: str,
+	request: WorkflowExecuteRequest,
+	service: WorkflowService = Depends(get_service)
+):
+	logger.info(f"POST /api/workflows/{workflow_name}/execute - Executing workflow")
 	try:
-		task_id = str(uuid.uuid4())
-		cancel_event = asyncio.Event()
-		service.cancel_events[task_id] = cancel_event
-		log_pos = await service._log_file_position()
-
-		task = asyncio.create_task(service.run_workflow_in_background(task_id, request, cancel_event))
-		service.workflow_tasks[task_id] = task
-		task.add_done_callback(
-			lambda _: (
-				service.workflow_tasks.pop(task_id, None),
-				service.cancel_events.pop(task_id, None),
-			)
-		)
-		return WorkflowExecuteResponse(
-			success=True,
-			task_id=task_id,
-			workflow=workflow_name,
-			log_position=log_pos,
-			message=f"Workflow '{workflow_name}' execution started with task ID: {task_id}",
-		)
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=f'Error starting workflow: {exc}')
+		return await service.execute_workflow(workflow_name, request)
+	except Exception as e:
+		logger.error(f"Error executing workflow {workflow_name}: {e}")
+		raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get('/logs/{task_id}', response_model=WorkflowLogsResponse)
@@ -114,9 +101,28 @@ async def get_task_status(task_id: str):
 
 
 @router.post('/tasks/{task_id}/cancel', response_model=WorkflowCancelResponse)
-async def cancel_workflow(task_id: str):
-	service = get_service()
-	result = await service.cancel_workflow(task_id)
-	if not result.success and result.message == 'Task not found':
-		raise HTTPException(status_code=404, detail=f'Task {task_id} not found')
-	return result
+async def cancel_workflow(
+	workflow_name: str,
+	task_id: str,
+	service: WorkflowService = Depends(get_service)
+):
+	logger.info(f"POST /api/workflows/{workflow_name}/cancel/{task_id} - Cancelling workflow")
+	try:
+		return await service.cancel_workflow(task_id)
+	except Exception as e:
+		logger.error(f"Error cancelling workflow {workflow_name}, task {task_id}: {e}")
+		raise HTTPException(status_code=404, detail="Task not found")
+
+
+@router.put('/{workflow_name}/update', response_model=WorkflowResponse)
+async def update_workflow(
+	workflow_name: str,
+	request: WorkflowUpdateRequest,
+	service: WorkflowService = Depends(get_service)
+):
+	logger.info(f"PUT /api/workflows/{workflow_name}/update - Updating workflow")
+	try:
+		return service.update_workflow(workflow_name, request)
+	except Exception as e:
+		logger.error(f"Error updating workflow {workflow_name}: {e}")
+		raise HTTPException(status_code=500, detail=str(e))

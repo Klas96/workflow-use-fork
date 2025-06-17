@@ -58,6 +58,26 @@ class WorkflowController(Controller):
 		# Pass the list of actions to exclude to the base class constructor
 		super().__init__(*args, exclude_actions=DISABLED_DEFAULT_ACTIONS, **kwargs)
 		self.__register_actions()
+		self.browser = Browser(
+			headless=False,
+			args=[
+				'--no-sandbox',  # Required for running as root
+				'--disable-setuid-sandbox',  # Required for running as root
+				'--disable-dev-shm-usage',
+				'--disable-accelerated-2d-canvas',
+				'--disable-gpu',
+				'--window-size=1920,1080',
+				'--start-maximized',
+				'--disable-extensions',
+				'--disable-default-apps',
+				'--disable-popup-blocking',
+				'--disable-notifications',
+				'--disable-infobars',
+				'--disable-web-security',
+				'--allow-running-insecure-content',
+				'--disable-features=IsolateOrigins,site-per-process'
+			]
+		)
 
 	def __register_actions(self):
 		# Navigate to URL ------------------------------------------------------------

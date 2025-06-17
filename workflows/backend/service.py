@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import uuid
 
 import aiofiles
 from browser_use.browser.browser import Browser
@@ -21,18 +22,21 @@ from .views import (
 	WorkflowResponse,
 	WorkflowStatusResponse,
 	WorkflowUpdateRequest,
+	WorkflowExecuteResponse,
 )
 
 class WorkflowService:
 	"""Workflow execution service."""
 
 	def __init__(self) -> None:
-		# ---------- Core resources ----------
-		self.tmp_dir: Path = Path('./tmp')
-		self.log_dir: Path = self.tmp_dir / 'logs'
-		self.log_dir.mkdir(exist_ok=True, parents=True)
-
-		# LLM / workflow executor
+		self._setup_logging()
+		
+		self.tmp_dir = Path(os.path.dirname(os.path.dirname(__file__))) / "tmp"
+		self.tmp_dir.mkdir(exist_ok=True)
+		self.log_dir = self.tmp_dir / "logs"
+		self.log_dir.mkdir(exist_ok=True)
+		
+		# Initialize LLM
 		try:
 			self.llm_instance = ChatOpenAI(model='gpt-4.1-mini')
 			self.logger.info("LLM initialized successfully")
@@ -40,7 +44,31 @@ class WorkflowService:
 			self.logger.error(f'Error initializing LLM: {exc}. Ensure OPENAI_API_KEY is set.')
 			self.llm_instance = None
 
-		self.browser_instance = Browser()
+		# Configure browser to use the X display
+		os.environ['DISPLAY'] = ':99'
+		os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # Use system browser
+		os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'
+		
+		self.browser_instance = Browser(
+			headless=False,
+			args=[
+				'--no-sandbox',  # Required for running as root
+				'--disable-setuid-sandbox',  # Required for running as root
+				'--disable-dev-shm-usage',
+				'--disable-accelerated-2d-canvas',
+				'--disable-gpu',
+				'--window-size=1920,1080',
+				'--start-maximized',
+				'--disable-extensions',
+				'--disable-default-apps',
+				'--disable-popup-blocking',
+				'--disable-notifications',
+				'--disable-infobars',
+				'--disable-web-security',
+				'--allow-running-insecure-content',
+				'--disable-features=IsolateOrigins,site-per-process'
+			]
+		)
 		self.controller_instance = WorkflowController()
 		self.logger.info("Browser and controller instances initialized")
 
@@ -48,8 +76,6 @@ class WorkflowService:
 		self.active_tasks: Dict[str, TaskInfo] = {}
 		self.workflow_tasks: Dict[str, asyncio.Task] = {}
 		self.cancel_events: Dict[str, asyncio.Event] = {}
-
-		self._setup_logging()
 
 	def _setup_logging(self):
 		"""Set up logging configuration."""
@@ -281,3 +307,43 @@ class WorkflowService:
 		self.active_tasks[task_id].status = 'cancelling'
 		self.logger.info(f"Task {task_id} cancellation requested")
 		return WorkflowCancelResponse(success=True, message='Workflow cancellation requested')
+
+	async def execute_workflow(self, workflow_name: str, request: WorkflowExecuteRequest) -> WorkflowExecuteResponse:
+		"""Execute a workflow with the given name and inputs."""
+		self.logger.info(f"Executing workflow: {workflow_name}")
+		
+		if not workflow_name:
+			self.logger.error("Missing workflow name")
+			raise ValueError('Missing workflow name')
+
+		workflow_path = self.tmp_dir / workflow_name
+		if not workflow_path.exists():
+			self.logger.error(f"Workflow {workflow_name} not found")
+			raise FileNotFoundError(f'Workflow {workflow_name} not found')
+
+		try:
+			task_id = str(uuid.uuid4())
+			cancel_event = asyncio.Event()
+			self.cancel_events[task_id] = cancel_event
+			log_pos = await self._log_file_position()
+
+			task = asyncio.create_task(self.run_workflow_in_background(task_id, request, cancel_event))
+			self.workflow_tasks[task_id] = task
+			task.add_done_callback(
+				lambda _: (
+					self.workflow_tasks.pop(task_id, None),
+					self.cancel_events.pop(task_id, None),
+				)
+			)
+			
+			self.logger.info(f"Workflow execution started with task ID: {task_id}")
+			return WorkflowExecuteResponse(
+				success=True,
+				task_id=task_id,
+				workflow=workflow_name,
+				log_position=log_pos,
+				message=f"Workflow '{workflow_name}' execution started with task ID: {task_id}",
+			)
+		except Exception as exc:
+			self.logger.error(f"Error starting workflow: {exc}")
+			raise RuntimeError(f'Error starting workflow: {exc}')

@@ -5,126 +5,151 @@ COPY ui/ ./
 RUN rm -rf node_modules package-lock.json && npm install && npm install @rollup/rollup-linux-x64-gnu && npm run build
 
 # Stage 2: Main app with minimal GUI and Python
-FROM python:3.12-slim
+FROM python:3.12-slim as stage-1
 
 WORKDIR /app
 
-# Install system dependencies for GUI, browsers, and Playwright
+# Install system dependencies including X11 and browser dependencies
 RUN apt-get update && apt-get install -y \
     xvfb \
     fluxbox \
     x11vnc \
     xterm \
-    fonts-freefont-ttf \
-    curl \
-    chromium \
-    chromium-driver \
-    firefox-esr \
-    build-essential \
-    python3-dev \
-    htop \
-    procps \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    wget \
+    gnupg \
+    net-tools \
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxcb1 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    libxshmfence1 \
+    libxss1 \
+    libxinerama1 \
+    libxrender1 \
+    libxcursor1 \
+    libxi6 \
+    libxtst6 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libwayland-client0 \
+    libwayland-cursor0 \
+    libwayland-egl1 \
+    libexpat1 \
+    libfontconfig1 \
+    libfreetype6 \
+    libpangoft2-1.0-0 \
+    libpangocairo-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy extension and workflows
 COPY extension/ ./extension/
 COPY workflows/ ./workflows/
 
-# Set up Python virtual environment
 WORKDIR /app/workflows
+
+# Create and activate virtual environment
 RUN python3 -m venv .venv && \
     . .venv/bin/activate && \
-    pip install --upgrade pip setuptools wheel
+    pip install -v -e . && \
+    pip install -v typer && \
+    pip install -v browser-use && \
+    pip install requests && \
+    pip install -v playwright && \
+    pip install -v patchright==1.52.4 && \
+    pip install fastmcp && \
+    pip install fastapi uvicorn && \
+    pip install python-multipart
 
-# Install Python dependencies
-RUN . .venv/bin/activate && pip install -v typer
-RUN . .venv/bin/activate && pip install -v browser-use
-RUN . .venv/bin/activate && pip install requests
-RUN . .venv/bin/activate && pip install -v playwright
-RUN . .venv/bin/activate && pip install -v patchright==1.52.4
-RUN . .venv/bin/activate && pip install -v -e . --no-deps
+# Clean up any old browser installs before installing Chromium
+RUN . .venv/bin/activate && rm -rf /app/workflows/.venv/lib/python3.12/site-packages/playwright/driver/package/.local-browsers || true
+# Ensure browser download is not skipped and install Chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
 RUN . .venv/bin/activate && python -m playwright install chromium
-RUN . .venv/bin/activate && pip install fastmcp
-RUN . .venv/bin/activate && pip install fastapi uvicorn
-RUN . .venv/bin/activate && pip install python-multipart
 
-# Copy built frontend from Stage 1
 WORKDIR /app
+
+# Copy frontend build
 COPY --from=frontend-build /app/ui/dist ./ui/dist
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=8000
-ENV DISPLAY=:99
-ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH=/usr/bin/firefox-esr
-
-# Create a startup script
+# Create startup script
 RUN echo '#!/bin/bash\n\
 if [ ! -d "/app/workflows/.venv" ]; then\n\
-    echo "Creating virtual environment..."\n\
-    python3 -m venv /app/workflows/.venv\n\
-    . /app/workflows/.venv/bin/activate\n\
-    pip install -v typer\n\
-    pip install -v browser-use\n\
-    pip install requests\n\
-    pip install -v playwright\n\
-    pip install -v patchright\n\
-    pip install -v -e . --no-deps\n\
-    python -m playwright install\n\
-    pip install fastmcp\n\
-    pip install fastapi uvicorn\n\
-    pip install python-multipart\n\
+    echo "Virtual environment not found. Please mount the workflows directory."\n\
+    exit 1\n\
 fi\n\
 \n\
-# Create and set permissions for logs directory\n\
+# Create logs directory\n\
 mkdir -p /app/workflows/tmp/logs\n\
-chmod 777 /app/workflows/tmp/logs\n\
 \n\
 # Clean up any existing X server lock files\n\
 rm -f /tmp/.X99-lock\n\
 rm -f /tmp/.X11-unix/X99\n\
 \n\
-# Start Xvfb with a larger screen and wait for it to be ready\n\
-Xvfb :99 -screen 0 1024x768x24 -ac &\n\
+# Start Xvfb with proper configuration\n\
+Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &\n\
+\n\
+# Wait for X server to be ready\n\
+for i in $(seq 1 10); do\n\
+    if xdpyinfo -display :99 >/dev/null 2>&1; then\n\
+        break\n\
+    fi\n\
+    echo "Waiting for X server to be ready... ($i/10)"\n\
+    sleep 1\n\
+done\n\
+\n\
+# Start window manager\n\
+fluxbox &\n\
 sleep 2\n\
 \n\
-# Set display environment variable\n\
-export DISPLAY=:99\n\
+# Start VNC server with proper configuration\n\
+x11vnc -display :99 -forever -shared -nopw -noxrecord -noxfixes -noxdamage &\n\
 \n\
-# Start fluxbox window manager\n\
-fluxbox &\n\
-sleep 1\n\
+# Wait for VNC server to be ready\n\
+for i in $(seq 1 10); do\n\
+    if netstat -tuln | grep -q ":5900 "; then\n\
+        break\n\
+    fi\n\
+    echo "Waiting for VNC server to be ready... ($i/10)"\n\
+    sleep 1\n\
+done\n\
 \n\
-# Start x11vnc with proper options\n\
-x11vnc -display :99 -nopw -forever -shared -noxdamage &\n\
+# Start the backend API\n\
+cd /app/workflows && . .venv/bin/activate && python -m uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log &\n\
 \n\
-# Start the frontend server\n\
-cd /app\n\
-python3 -m http.server 8000 --directory ui/dist &\n\
+# Start the frontend\n\
+cd /app && python -m http.server 8000 &\n\
 \n\
-# Start the API server\n\
-cd /app/workflows\n\
-export PYTHONPATH=/app/workflows\n\
-. .venv/bin/activate\n\
-uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log &\n\
+# Start xterm with process monitoring\n\
+xterm -geometry 100x30+0+400 -e "while true; do clear; ps aux | grep -E \"python|uvicorn|playwright|x11vnc|Xvfb\" | grep -v grep; sleep 2; done" &\n\
 \n\
-# Launch monitoring tools in xterm\n\
-xterm -geometry 100x30+0+0 -e "htop" &\n\
-xterm -geometry 100x30+0+400 -e "tail -f /app/workflows/tmp/logs/backend.log" &\n\
-xterm -geometry 100x30+500+0 -e "while true; do clear; ps aux | grep -E \"uvicorn|python|chromium|firefox\" | grep -v grep; sleep 2; done" &\n\
-\n\
-# Keep the container running\n\
-tail -f /dev/null\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# Keep container running\n\
+tail -f /dev/null' > /app/start.sh && chmod +x /app/start.sh
+
+# Set environment variables
+ENV DISPLAY=:99
+ENV PYTHONUNBUFFERED=1
+ENV PLAYWRIGHT_BROWSER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-accelerated-2d-canvas --disable-gpu --window-size=1920,1080 --start-maximized --disable-extensions --disable-default-apps --disable-popup-blocking --disable-notifications --disable-infobars --disable-web-security --allow-running-insecure-content --disable-features=IsolateOrigins,site-per-process"
+ENV PYTHONPATH=/app/workflows:$PYTHONPATH
 
 # Expose ports
-EXPOSE 8000
-EXPOSE 8002
-EXPOSE 5900
+EXPOSE 5900 8002 8000
 
-# Start the application with Xvfb and minimal GUI
+# Start the application
 CMD ["/app/start.sh"]

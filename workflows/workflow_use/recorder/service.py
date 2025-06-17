@@ -27,7 +27,7 @@ class RecordingService:
 	def __init__(self):
 		self.event_queue: asyncio.Queue[RecorderEvent] = asyncio.Queue()
 		self.last_workflow_update_event: Optional[HttpWorkflowUpdateEvent] = None
-		self.browser: Browser
+		self.browser: Optional[Browser] = None
 
 		self.final_workflow_output: Optional[WorkflowDefinitionSchema] = None
 		self.recording_complete_event = asyncio.Event()
@@ -125,6 +125,7 @@ class RecordingService:
 					'--no-first-run',
 					'--display=:99',  # Use the Xvfb display
 					'--window-size=1024,768',  # Match Xvfb screen size
+					'--no-sandbox',  # Added no-sandbox flag
 				],
 				keep_alive=True,
 			)
