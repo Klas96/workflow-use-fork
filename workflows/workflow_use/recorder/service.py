@@ -125,9 +125,19 @@ class RecordingService:
 					'--no-first-run',
 					'--display=:99',  # Use the Xvfb display
 					'--window-size=1024,768',  # Match Xvfb screen size
-					'--no-sandbox',  # Added no-sandbox flag
+					'--no-sandbox',  # Required for running as root
+					'--disable-setuid-sandbox',  # Required for running as root
+					'--disable-dev-shm-usage',  # Handle limited shared memory in Docker
+					'--disable-gpu',  # Disable GPU hardware acceleration
+					'--disable-software-rasterizer',  # Disable software rasterizer
 				],
 				keep_alive=True,
+				chromiumSandbox=False,
+				channel="chrome",  # Use Chrome instead of Chromium
+				launch_options={
+					"args": ["--no-sandbox", "--disable-setuid-sandbox"],
+					"chromiumSandbox": False
+				}
 			)
 
 			# Create and configure browser

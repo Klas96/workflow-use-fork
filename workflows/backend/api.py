@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
 import time
+from dotenv import load_dotenv
 
 from .routers import router
 
@@ -55,4 +56,5 @@ app.include_router(router)
 
 # Optional standalone runner
 if __name__ == '__main__':
+	load_dotenv("/app/workflows/.env")
 	uvicorn.run('api:app', host='127.0.0.1', port=8002, log_level='info', access_log=True)

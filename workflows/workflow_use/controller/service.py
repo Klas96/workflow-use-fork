@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from browser_use import Browser
 from browser_use.agent.views import ActionResult
@@ -76,7 +77,15 @@ class WorkflowController(Controller):
 				'--disable-web-security',
 				'--allow-running-insecure-content',
 				'--disable-features=IsolateOrigins,site-per-process'
-			]
+			],
+			chromiumSandbox=False,
+			channel="chrome",  # Use Chrome instead of Chromium
+			executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome'),
+			launch_options={
+				"args": ["--no-sandbox", "--disable-setuid-sandbox"],
+				"chromiumSandbox": False,
+				"executablePath": os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome')
+			}
 		)
 
 	def __register_actions(self):

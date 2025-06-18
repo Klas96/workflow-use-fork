@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     net-tools \
+    curl \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -56,97 +57,72 @@ RUN apt-get update && apt-get install -y \
     libfreetype6 \
     libpangoft2-1.0-0 \
     libpangocairo-1.0-0 \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -m -d /home/chrome -s /bin/bash chrome \
+    && usermod -aG sudo chrome \
+    && echo "chrome ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Install Google Chrome
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy extension and workflows
 COPY extension/ ./extension/
 COPY workflows/ ./workflows/
+COPY workflows/.env ./workflows/.env
+COPY start.sh /app/start.sh
 
 WORKDIR /app/workflows
 
-# Create and activate virtual environment
-RUN python3 -m venv .venv && \
-    . .venv/bin/activate && \
-    pip install -v -e . && \
-    pip install -v typer && \
-    pip install -v browser-use && \
+# Install Python packages globally
+RUN pip install -e . && \
+    pip install typer && \
+    pip install "playwright==1.39" && \
+    pip install "browser-use>=0.1.0" && \
     pip install requests && \
-    pip install -v playwright && \
-    pip install -v patchright==1.52.4 && \
+    pip install patchright==1.52.4 && \
     pip install fastmcp && \
     pip install fastapi uvicorn && \
-    pip install python-multipart
+    pip install python-multipart && \
+    pip install python-dotenv && \
+    python -m playwright install-deps chromium && \
+    python -m playwright install chromium
 
-# Clean up any old browser installs before installing Chromium
-RUN . .venv/bin/activate && rm -rf /app/workflows/.venv/lib/python3.12/site-packages/playwright/driver/package/.local-browsers || true
-# Ensure browser download is not skipped and install Chromium
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
-RUN . .venv/bin/activate && python -m playwright install chromium
+# Set up Chrome for Playwright (using system Chrome)
+RUN mkdir -p /home/chrome/.cache/ms-playwright && \
+    chown -R chrome:chrome /home/chrome/.cache && \
+    sudo -u chrome mkdir -p /home/chrome/.cache/ms-playwright/chromium-1060/chrome-linux && \
+    sudo -u chrome ln -s /usr/bin/google-chrome-stable /home/chrome/.cache/ms-playwright/chromium-1060/chrome-linux/chrome
+
+# Set environment variables
+ENV DISPLAY=:99
+ENV PYTHONUNBUFFERED=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV PLAYWRIGHT_CHROMIUM_SANDBOX=0
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/chrome/.cache/ms-playwright
+ENV PLAYWRIGHT_BROWSER_ARGS="--no-sandbox"
+ENV PYTHONPATH=/app/workflows:$PYTHONPATH
 
 WORKDIR /app
 
 # Copy frontend build
 COPY --from=frontend-build /app/ui/dist ./ui/dist
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-if [ ! -d "/app/workflows/.venv" ]; then\n\
-    echo "Virtual environment not found. Please mount the workflows directory."\n\
-    exit 1\n\
-fi\n\
-\n\
-# Create logs directory\n\
-mkdir -p /app/workflows/tmp/logs\n\
-\n\
-# Clean up any existing X server lock files\n\
-rm -f /tmp/.X99-lock\n\
-rm -f /tmp/.X11-unix/X99\n\
-\n\
-# Start Xvfb with proper configuration\n\
-Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &\n\
-\n\
-# Wait for X server to be ready\n\
-for i in $(seq 1 10); do\n\
-    if xdpyinfo -display :99 >/dev/null 2>&1; then\n\
-        break\n\
-    fi\n\
-    echo "Waiting for X server to be ready... ($i/10)"\n\
-    sleep 1\n\
-done\n\
-\n\
-# Start window manager\n\
-fluxbox &\n\
-sleep 2\n\
-\n\
-# Start VNC server with proper configuration\n\
-x11vnc -display :99 -forever -shared -nopw -noxrecord -noxfixes -noxdamage &\n\
-\n\
-# Wait for VNC server to be ready\n\
-for i in $(seq 1 10); do\n\
-    if netstat -tuln | grep -q ":5900 "; then\n\
-        break\n\
-    fi\n\
-    echo "Waiting for VNC server to be ready... ($i/10)"\n\
-    sleep 1\n\
-done\n\
-\n\
-# Start the backend API\n\
-cd /app/workflows && . .venv/bin/activate && python -m uvicorn backend.api:app --host 0.0.0.0 --port 8002 --no-access-log &\n\
-\n\
-# Start the frontend\n\
-cd /app && python -m http.server 8000 &\n\
-\n\
-# Start xterm with process monitoring\n\
-xterm -geometry 100x30+0+400 -e "while true; do clear; ps aux | grep -E \"python|uvicorn|playwright|x11vnc|Xvfb\" | grep -v grep; sleep 2; done" &\n\
-\n\
-# Keep container running\n\
-tail -f /dev/null' > /app/start.sh && chmod +x /app/start.sh
+RUN chmod +x /app/start.sh && \
+    # Fix permissions for the chrome user
+    chown -R chrome:chrome /app && \
+    chown -R chrome:chrome /home/chrome && \
+    chmod -R 755 /app
 
-# Set environment variables
-ENV DISPLAY=:99
-ENV PYTHONUNBUFFERED=1
-ENV PLAYWRIGHT_BROWSER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-accelerated-2d-canvas --disable-gpu --window-size=1920,1080 --start-maximized --disable-extensions --disable-default-apps --disable-popup-blocking --disable-notifications --disable-infobars --disable-web-security --allow-running-insecure-content --disable-features=IsolateOrigins,site-per-process"
-ENV PYTHONPATH=/app/workflows:$PYTHONPATH
+# Switch to chrome user
+USER chrome
 
 # Expose ports
 EXPOSE 5900 8002 8000

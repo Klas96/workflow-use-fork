@@ -67,7 +67,15 @@ class WorkflowService:
 				'--disable-web-security',
 				'--allow-running-insecure-content',
 				'--disable-features=IsolateOrigins,site-per-process'
-			]
+			],
+			chromiumSandbox=False,
+			channel="chrome",  # Use Chrome instead of Chromium
+			executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome'),
+			launch_options={
+				"args": ["--no-sandbox", "--disable-setuid-sandbox"],
+				"chromiumSandbox": False,
+				"executablePath": os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome')
+			}
 		)
 		self.controller_instance = WorkflowController()
 		self.logger.info("Browser and controller instances initialized")

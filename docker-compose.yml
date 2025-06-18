@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  workflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5900:5900"
+      - "8002:8002"
+      - "8000:8000"
+    volumes:
+      - ./workflows:/app/workflows
+      - ./extension:/app/extension
+      - /dev/shm:/dev/shm  # Shared memory access
+    environment:
+      - DISPLAY=:99
+      - PYTHONUNBUFFERED=1
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+      - PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/opt/google/chrome/chrome
+      - PLAYWRIGHT_CHROMIUM_SANDBOX=1
+      - PLAYWRIGHT_BROWSERS_PATH=/opt/google/chrome
+    security_opt:
+      - seccomp=unconfined  # Required for Chrome sandbox
+    cap_add:
+      - SYS_ADMIN  # Required for Chrome sandbox
+    privileged: true  # Required for Chrome sandbox
+    shm_size: '2gb'  # Increase shared memory size 

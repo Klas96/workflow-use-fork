@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+from dotenv import load_dotenv
+load_dotenv("/app/workflows/.env")
+
 import asyncio
 import json
 import os

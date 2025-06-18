@@ -80,9 +80,10 @@ class Workflow:
         browser_args = os.environ.get('PLAYWRIGHT_BROWSER_ARGS', '').split() or [
             '--no-sandbox',  # Required for running as root
             '--disable-setuid-sandbox',  # Required for running as root
-            '--disable-dev-shm-usage',
+            '--disable-dev-shm-usage',  # Handle limited shared memory in Docker
+            '--disable-gpu',  # Disable GPU hardware acceleration
+            '--disable-software-rasterizer',  # Disable software rasterizer
             '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
             '--window-size=1920,1080',
             '--start-maximized',
             '--disable-extensions',
@@ -97,11 +98,17 @@ class Workflow:
 
         self.browser = browser or Browser(
             headless=False,
-            args=browser_args
+            args=browser_args,
+            keep_alive=True,
+            chromiumSandbox=False,
+            channel="chrome",  # Use Chrome instead of Chromium
+            executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome'),
+            launch_options={
+                "args": ["--no-sandbox", "--disable-setuid-sandbox"],
+                "chromiumSandbox": False,
+                "executablePath": os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/opt/google/chrome/google-chrome')
+            }
         )
-
-        # Hack to not close it after agent kicks in
-        self.browser.browser_profile.keep_alive = True
 
         self.llm = llm
         self.page_extraction_llm = page_extraction_llm
